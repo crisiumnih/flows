@@ -1,0 +1,100 @@
+import copy
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from networks import Critic, FlowVectorField, OneStepFlow
+
+class FQL():
+    def __init__(self, obs_dim, action_dim, max_action, discount=0.99,
+                tau=0.005, alpha=10.0, flow_steps=10):
+                
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
+        self.flow = FlowVectorField(obs_dim, action_dim).to(self.device)
+        self.critic = Critic(obs_dim, action_dim).to(self.device)
+        self.one_step_flow = OneStepFlow(obs_dim, action_dim).to(self.device)
+        self.critic_target = copy.deepcopy(self.critic)
+        
+        self.actor_optimizer = torch.optim.Adam(list(self.flow.parameters()) + list(self.one_step_flow.parameters()), lr=3e-4)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
+        
+        self.max_action = max_action
+        self.action_dim = action_dim
+        self.tau = tau
+        self.discount = discount
+        self.alpha = alpha
+        self.flow_steps = flow_steps
+        
+        self.total_it = 0
+        
+    def compute_flow_actions(self, obs, noise):
+        action = noise
+        for i in range(self.flow_steps):
+            t = torch.full((obs.shape[0], 1), i / self.flow_steps).to(self.device) 
+            vel = self.flow(obs, action, t)
+            action = action + vel/self.flow_steps
+        action = torch.clamp(action, -1, 1)
+        return action
+    
+    def select_action(self, obs):
+        obs = torch.FloatTensor(obs.reshape(1, -1)).to(self.device)
+        noise = torch.randn(1, self.action_dim).to(self.device)
+        action = self.one_step_flow(obs, noise)
+        action = torch.clamp(action, -1, 1)
+        return action.cpu().data.numpy().flatten()
+    
+    def train(self, replay_buffer, batch_size=256):
+        self.total_it += 1
+
+        # Sample replay buffer 
+        state, action, next_state, reward, mask = replay_buffer.sample(batch_size)
+
+        with torch.no_grad():
+            noise = torch.randn(batch_size, self.action_dim).to(self.device)
+            next_action = torch.clamp(self.one_step_flow(next_state, noise), -1, 1)
+            target_Q1, target_Q2 = self.critic_target(next_state, next_action)
+            target_Q = torch.min(target_Q1, target_Q2)
+            target_Q = reward + mask * self.discount * target_Q
+            
+        current_Q1, current_Q2 = self.critic(state, action)
+        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
+        
+        # BC flow loss
+        x_0 = torch.randn_like(action)
+        x_1 = action
+        t = torch.rand(batch_size, 1).to(self.device)
+        x_t = (1 - t) * x_0 + t * x_1
+        velocity = x_1 - x_0
+        
+        pred_vel = self.flow(state, x_t, t)
+        bc_flow_loss = F.mse_loss(pred_vel, velocity)
+        
+        # Distillation loss
+        
+        noise = torch.randn(batch_size, self.action_dim).to(self.device)
+        with torch.no_grad():
+            target_actions = self.compute_flow_actions(state, noise)
+        pred_actions = self.one_step_flow(state, noise)
+        distill_loss = F.mse_loss(pred_actions, target_actions)
+        
+        # Q loss
+        pred_actions_clipped = torch.clamp(pred_actions, -1, 1)
+        q1, q2 = self.critic(state, pred_actions_clipped)
+        q_loss = -((q1+q2)/2).mean()
+        
+        actor_loss = bc_flow_loss + self.alpha * distill_loss + q_loss
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
+        
+        for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()): 
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            
