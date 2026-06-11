@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
 class Critic(nn.Module):
@@ -19,20 +20,20 @@ class Critic(nn.Module):
     
     def forward(self, obs, action):
         x = torch.cat([obs, action], 1)
-        q1 = torch.gelu(self.l1(x))
-        q1 = torch.gelu(self.l2(q1))
+        q1 = F.gelu(self.l1(x))
+        q1 = F.gelu(self.l2(q1))
         q1 = self.l3(q1)
         
-        q2 = torch.gelu(self.l4(x))
-        q2 = torch.gelu(self.l5(q2))
+        q2 = F.gelu(self.l4(x))
+        q2 = F.gelu(self.l5(q2))
         q2 = self.l6(q2)
 
         return q1, q2
     
     def Q1(self, obs, action):
         x = torch.cat([obs, action], 1)
-        q1 = torch.gelu(self.l1(x))
-        q1 = torch.gelu(self.l2(q1))
+        q1 = F.gelu(self.l1(x))
+        q1 = F.gelu(self.l2(q1))
         q1 = self.l3(q1)
         return q1
 

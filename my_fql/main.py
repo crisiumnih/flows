@@ -1,3 +1,4 @@
+import os
 import ogbench
 import numpy as np
 import torch
@@ -49,6 +50,14 @@ if __name__ == "__main__":
     # Training loop
     for t in range(args.max_timesteps):
         policy.train(replay_buffer, args.batch_size)
+
+        if (t + 1) % 1000 == 0:
+            print(f"Step: {t + 1}/{args.max_timesteps}")
+
+        if (t + 1) % 100_000 == 0:
+            os.makedirs("checkpoints", exist_ok=True)
+            policy.save(f"checkpoints/fql_{args.env}_{t+1}.pt")
+            print(f"  Saved checkpoint at step {t+1}")
 
         if (t + 1) % args.eval_freq == 0:
             print(f"Step: {t + 1}")

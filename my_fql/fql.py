@@ -85,16 +85,44 @@ class FQL():
         pred_actions = self.one_step_flow(state, noise)
         distill_loss = F.mse_loss(pred_actions, target_actions)
         
-        # Q loss
+        # Q loss (with normalization to prevent Q-value explosion)
         pred_actions_clipped = torch.clamp(pred_actions, -1, 1)
         q1, q2 = self.critic(state, pred_actions_clipped)
-        q_loss = -((q1+q2)/2).mean()
+        q = (q1 + q2) / 2
+        lam = (1 / q.abs().mean()).detach()
+        q_loss = -lam * q.mean()
         
         actor_loss = bc_flow_loss + self.alpha * distill_loss + q_loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
-        
-        for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()): 
+
+        for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        if self.total_it % 5000 == 0:
+            print(f"  [losses] critic={critic_loss.item():.4f} bc_flow={bc_flow_loss.item():.4f} "
+                  f"distill={distill_loss.item():.4f} q={q_loss.item():.4f} "
+                  f"reward_mean={reward.mean().item():.4f} Q_mean={((q1+q2)/2).mean().item():.4f}")
+
+    def save(self, path):
+        torch.save({
+            'flow': self.flow.state_dict(),
+            'one_step_flow': self.one_step_flow.state_dict(),
+            'critic': self.critic.state_dict(),
+            'critic_target': self.critic_target.state_dict(),
+            'actor_optimizer': self.actor_optimizer.state_dict(),
+            'critic_optimizer': self.critic_optimizer.state_dict(),
+            'total_it': self.total_it,
+        }, path)
+
+    def load(self, path):
+        checkpoint = torch.load(path, map_location=self.device)
+        self.flow.load_state_dict(checkpoint['flow'])
+        self.one_step_flow.load_state_dict(checkpoint['one_step_flow'])
+        self.critic.load_state_dict(checkpoint['critic'])
+        self.critic_target.load_state_dict(checkpoint['critic_target'])
+        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+        self.total_it = checkpoint['total_it']
             
