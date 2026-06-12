@@ -20,7 +20,8 @@ class FQL():
         self.one_step_flow = OneStepFlow(obs_dim, action_dim, chunk_size).to(self.device)
         self.critic_target = copy.deepcopy(self.critic)
         
-        self.actor_optimizer = torch.optim.Adam(list(self.flow.parameters()) + list(self.one_step_flow.parameters()), lr=3e-4)
+        self.actor_params = list(self.flow.parameters()) + list(self.one_step_flow.parameters())
+        self.actor_optimizer = torch.optim.Adam(self.actor_params, lr=3e-4)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
         
         self.max_action = max_action
@@ -35,12 +36,11 @@ class FQL():
         
     def compute_flow_actions(self, obs, noise):
         action = noise
-        with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.device.type == "cuda"):
-            for i in range(self.flow_steps):
-                t = torch.full((obs.shape[0], 1), i / self.flow_steps).to(self.device)
-                vel = self.flow(obs, action, t)
-                action = action + vel/self.flow_steps
-        action = torch.clamp(action.float(), -1, 1)
+        for i in range(self.flow_steps):
+            t = torch.full((obs.shape[0], 1), i / self.flow_steps).to(self.device)
+            vel = self.flow(obs, action, t)
+            action = action + vel/self.flow_steps
+        action = torch.clamp(action, -1, 1)
         return action
     
     def select_action(self, obs):
@@ -100,7 +100,7 @@ class FQL():
         actor_loss = bc_flow_loss + self.alpha * distill_loss + q_loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(list(self.flow.parameters()) + list(self.one_step_flow.parameters()), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.actor_params, 1.0)
         self.actor_optimizer.step()
 
         for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
