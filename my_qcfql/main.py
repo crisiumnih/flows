@@ -3,7 +3,7 @@ import ogbench
 import numpy as np
 import torch
 import argparse
-from fql import FQL
+from qcfql import FQL
 from replay_buffer import ReplayBuffer
 
 

@@ -20,6 +20,13 @@ class FQL():
         self.one_step_flow = OneStepFlow(obs_dim, action_dim, chunk_size).to(self.device)
         self.critic_target = copy.deepcopy(self.critic)
         
+        # Compile networks for speed (CUDA only)
+        if self.device.type == "cuda":
+            self.flow = torch.compile(self.flow)
+            self.one_step_flow = torch.compile(self.one_step_flow)
+            self.critic = torch.compile(self.critic)
+            self.critic_target = torch.compile(self.critic_target)
+
         self.actor_optimizer = torch.optim.Adam(list(self.flow.parameters()) + list(self.one_step_flow.parameters()), lr=3e-4)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
         
@@ -35,11 +42,12 @@ class FQL():
         
     def compute_flow_actions(self, obs, noise):
         action = noise
-        for i in range(self.flow_steps):
-            t = torch.full((obs.shape[0], 1), i / self.flow_steps).to(self.device) 
-            vel = self.flow(obs, action, t)
-            action = action + vel/self.flow_steps
-        action = torch.clamp(action, -1, 1)
+        with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.device.type == "cuda"):
+            for i in range(self.flow_steps):
+                t = torch.full((obs.shape[0], 1), i / self.flow_steps).to(self.device)
+                vel = self.flow(obs, action, t)
+                action = action + vel/self.flow_steps
+        action = torch.clamp(action.float(), -1, 1)
         return action
     
     def select_action(self, obs):
@@ -47,8 +55,7 @@ class FQL():
         noise = torch.randn(1, self.action_dim * self.chunk_size).to(self.device)
         action = self.one_step_flow(obs, noise)
         action = torch.clamp(action, -1, 1)
-        r_action = action.cpu().data.numpy().flatten()
-        
+        r_action = action.cpu().data.numpy().reshape(self.chunk_size, self.action_dim)
         return r_action
     
     def train(self, replay_buffer, batch_size=256):
