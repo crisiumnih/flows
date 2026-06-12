@@ -20,13 +20,6 @@ class FQL():
         self.one_step_flow = OneStepFlow(obs_dim, action_dim, chunk_size).to(self.device)
         self.critic_target = copy.deepcopy(self.critic)
         
-        # Compile networks for speed (CUDA only)
-        if self.device.type == "cuda":
-            self.flow = torch.compile(self.flow)
-            self.one_step_flow = torch.compile(self.one_step_flow)
-            self.critic = torch.compile(self.critic)
-            self.critic_target = torch.compile(self.critic_target)
-
         self.actor_optimizer = torch.optim.Adam(list(self.flow.parameters()) + list(self.one_step_flow.parameters()), lr=3e-4)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
         
