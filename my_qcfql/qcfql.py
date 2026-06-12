@@ -63,11 +63,13 @@ class FQL():
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)
             target_Q = torch.min(target_Q1, target_Q2)
             target_Q = reward + mask * (self.discount**self.chunk_size) * target_Q
+            target_Q = torch.clamp(target_Q, -500, 0)
             
         current_Q1, current_Q2 = self.critic(state, action)
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1.0)
         self.critic_optimizer.step()
         
         # BC flow loss
@@ -98,6 +100,7 @@ class FQL():
         actor_loss = bc_flow_loss + self.alpha * distill_loss + q_loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(list(self.flow.parameters()) + list(self.one_step_flow.parameters()), 1.0)
         self.actor_optimizer.step()
 
         for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
