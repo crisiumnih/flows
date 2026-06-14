@@ -29,13 +29,17 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
 
     # Create env and load dataset
+    print("Loading dataset...")
     env, train_dataset, val_dataset = ogbench.make_env_and_datasets(args.env)
+    print(f"Dataset loaded. Observations: {train_dataset['observations'].shape}")
 
     obs_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
     max_action = float(env.action_space.high[0])
     
+    print("Creating policy...")
     policy = FQL(obs_dim, action_dim, max_action, discount=args.discount, tau=args.tau, alpha=args.alpha, flow_steps=args.flow_steps)
+    print("Policy created.")
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -44,9 +48,11 @@ if __name__ == "__main__":
     else:
         device = torch.device("cpu")
 
+    print("Loading replay buffer...")
     replay_buffer = ReplayBuffer(device)
     replay_buffer.load_ogbench(train_dataset)
 
+    print("Starting training...")
     # Training loop
     for t in range(args.max_timesteps):
         policy.train(replay_buffer, args.batch_size)

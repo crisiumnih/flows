@@ -6,36 +6,30 @@ import numpy as np
 class Critic(nn.Module):
     def __init__(self, obs_dim, action_dim, chunk_size=5, hidden_dim=512):
         super(Critic, self).__init__()
+        input_dim = obs_dim + action_dim * chunk_size
 
-        # Q1 architecture
-        self.l1 = nn.Linear(obs_dim + action_dim * chunk_size, hidden_dim)
-        self.l2 = nn.Linear(hidden_dim, hidden_dim)
-        self.l3 = nn.Linear(hidden_dim, 1)
+        self.q1 = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, 1),
+        )
+        self.q2 = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, 1),
+        )
 
-        # Q2 architecture
-        self.l4 = nn.Linear(obs_dim + action_dim * chunk_size, hidden_dim)
-        self.l5 = nn.Linear(hidden_dim, hidden_dim)
-        self.l6 = nn.Linear(hidden_dim, 1)
-        
-    
     def forward(self, obs, action):
         x = torch.cat([obs, action], 1)
-        q1 = F.gelu(self.l1(x))
-        q1 = F.gelu(self.l2(q1))
-        q1 = self.l3(q1)
-        
-        q2 = F.gelu(self.l4(x))
-        q2 = F.gelu(self.l5(q2))
-        q2 = self.l6(q2)
+        return self.q1(x), self.q2(x)
 
-        return q1, q2
-    
     def Q1(self, obs, action):
         x = torch.cat([obs, action], 1)
-        q1 = F.gelu(self.l1(x))
-        q1 = F.gelu(self.l2(q1))
-        q1 = self.l3(q1)
-        return q1
+        return self.q1(x)
 
 class FlowVectorField(nn.Module):
     def __init__(self, obs_dim, action_dim, chunk_size=5, hidden_dim=512):

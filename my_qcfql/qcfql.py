@@ -7,7 +7,7 @@ from networks import Critic, FlowVectorField, OneStepFlow
 
 class FQL():
     def __init__(self, obs_dim, action_dim, max_action, chunk_size, discount=0.99,
-                tau=0.005, alpha=10.0, flow_steps=10):
+                tau=0.005, alpha=100.0, flow_steps=10):
                 
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
@@ -51,6 +51,12 @@ class FQL():
         r_action = action.cpu().data.numpy().reshape(self.chunk_size, self.action_dim)
         return r_action
     
+    def freeze_flow(self):
+        for p in self.flow.parameters():
+            p.requires_grad = False
+        self.actor_params = list(self.one_step_flow.parameters())
+        self.actor_optimizer = torch.optim.Adam(self.actor_params, lr=3e-4)
+    
     def train(self, replay_buffer, batch_size=256):
         self.total_it += 1
 
@@ -63,7 +69,6 @@ class FQL():
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)
             target_Q = torch.min(target_Q1, target_Q2)
             target_Q = reward + mask * (self.discount**self.chunk_size) * target_Q
-            target_Q = torch.clamp(target_Q, -500, 0)
             
         current_Q1, current_Q2 = self.critic(state, action)
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
@@ -90,7 +95,7 @@ class FQL():
         pred_actions = self.one_step_flow(state, noise)
         distill_loss = F.mse_loss(pred_actions, target_actions)
         
-        # Q loss (with normalization to prevent Q-value explosion)
+        # Q loss (normalized)
         pred_actions_clipped = torch.clamp(pred_actions, -1, 1)
         q1, q2 = self.critic(state, pred_actions_clipped)
         q = (q1 + q2) / 2
@@ -100,7 +105,6 @@ class FQL():
         actor_loss = bc_flow_loss + self.alpha * distill_loss + q_loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor_params, 1.0)
         self.actor_optimizer.step()
 
         for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
